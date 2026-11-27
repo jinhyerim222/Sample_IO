@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 const fmt=x=>Number(x).toLocaleString('ko-KR',{maximumFractionDigits:3});
 let worker, nextId=0, requests=new Map(), sectors=[], rowChoices=[], cells=[];
-let effectList=[], barMetric='production', linkages=[], hmData=null, hmCustomList=[];
+let effectList=[], effectMode='single', barMetric='production', linkages=[], hmData=null, hmCustomList=[];
 
 function text(tag,value){const e=document.createElement(tag);e.textContent=value;return e;}
 function call(type,payload){return new Promise((resolve,reject)=>{const id=++nextId;requests.set(id,{resolve,reject});worker.postMessage({id,type,payload});});}
@@ -25,7 +25,7 @@ function options(el,list){
 
 const CONTROLS = [
   'sheet','row','row-search','col-search',
-  'effect-top-n','download-effects',
+  'pair-metric-a','pair-metric-b','pair-sort','effect-top-n','download-effects',
   'hm-sheet','hm-mode','hm-top-n','hm-scale','hm-search','hm-sector-select','hm-add-sector','hm-reset-sector',
   'linkage-search','linkage-sort'
 ];
@@ -96,15 +96,20 @@ $('row-search').oninput=()=>{filterRows();if($('row').value)explore();else{$('ce
 $('col-search').oninput=renderCells;
 
 /* 2. 생산 · 수입 · 부가가치 유발효과 순위 막대그래프 */
-document.querySelectorAll('.tab-btn').forEach(btn=>{
+document.querySelectorAll('#effects-sec .tab-btn').forEach(btn=>{
   btn.onclick=()=>{
-    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('#effects-sec .tab-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    barMetric=btn.dataset.metric;
+    effectMode = btn.dataset.mode;
+    if(btn.dataset.metric) barMetric = btn.dataset.metric;
+    $('pair-controls').hidden = (effectMode !== 'pair');
     if(effectList.length) renderEffectBars();
   };
 });
 $('effect-top-n').onchange=()=>{ if(effectList.length) renderEffectBars(); };
+$('pair-metric-a').onchange=()=>{ if(effectList.length) renderEffectBars(); };
+$('pair-metric-b').onchange=()=>{ if(effectList.length) renderEffectBars(); };
+$('pair-sort').onchange=()=>{ if(effectList.length) renderEffectBars(); };
 
 function renderEffects(){
   if(!effectList.length) return;
@@ -133,8 +138,52 @@ function renderEffectBars(){
     valueAdded:'linear-gradient(90deg, #4f46e5, #6366f1)'
   };
   const n = Number($('effect-top-n').value) || 15;
-  $('bar-title').textContent=`${labelMap[barMetric]} 상위 ${n}개 산업`;
 
+  if (effectMode === 'pair') {
+    const mA = $('pair-metric-a').value;
+    const mB = $('pair-metric-b').value;
+    const sortMode = $('pair-sort').value;
+    $('bar-title').textContent = `${labelMap[mA]} vs ${labelMap[mB]} 비교 (상위 ${n}개)`;
+
+    const sorted = [...effectList].sort((a,b)=>{
+      if (sortMode === 'b') return b[mB] - a[mB];
+      if (sortMode === 'gapA') return (b[mA] - b[mB]) - (a[mA] - a[mB]);
+      return b[mA] - a[mA];
+    });
+    const topList = sorted.slice(0, n);
+    const maxVal = Math.max(...topList.flatMap(r=>[r[mA], r[mB]]), 1e-9);
+
+    $('bars').replaceChildren(...topList.map((r,idx)=>{
+      const wrap=document.createElement('div');
+      wrap.className='bar-item';
+
+      const header=document.createElement('div');
+      header.className='bar-row-top';
+      header.innerHTML=`<span><span class="rank-pill">${idx+1}위</span> <strong>${r.code} ${r.name}</strong></span>`;
+      wrap.append(header);
+
+      const makeSubBar=(metricKey, tagLabel)=>{
+        const sub=document.createElement('div');
+        sub.className='pair-subrow';
+        const cap=document.createElement('div');
+        cap.className='pair-caption';
+        cap.innerHTML=`<span>${tagLabel}</span><strong>${r[metricKey].toFixed(4)}</strong>`;
+        const trk=document.createElement('div');trk.className='track';
+        const fl=document.createElement('div');fl.className='fill';
+        fl.style.width=Math.max(2, r[metricKey]/maxVal*100)+'%';
+        fl.style.background=colorMap[metricKey];
+        trk.append(fl);
+        sub.append(cap, trk);
+        return sub;
+      };
+
+      wrap.append(makeSubBar(mA, labelMap[mA]), makeSubBar(mB, labelMap[mB]));
+      return wrap;
+    }));
+    return;
+  }
+
+  $('bar-title').textContent=`${labelMap[barMetric]} 상위 ${n}개 산업`;
   const sorted=[...effectList].sort((a,b)=>b[barMetric]-a[barMetric]);
   const topList=sorted.slice(0,n);
   const max=Math.max(...topList.map(r=>r[barMetric]),1e-9);
