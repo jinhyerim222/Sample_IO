@@ -22,6 +22,12 @@ async function handle({id,type,payload}) {
       py.globals.set('sheet_input',payload.sheet);
       py.globals.set('row_input',payload.row||'');
       result=py.runPython('explore(sheet_input, row_input)');
+    } else if(type==='heatmap') {
+      py.globals.set('hm_sheet',payload.sheet);
+      py.globals.set('hm_mode',payload.mode||'top');
+      py.globals.set('hm_top_n',payload.topN||15);
+      py.globals.set('hm_codes_json',JSON.stringify(payload.customCodes||[]));
+      result=py.runPython('heatmap(hm_sheet, hm_mode, hm_top_n, json.loads(hm_codes_json))');
     } else {
       py.globals.set('scenario_input',JSON.stringify(payload));
       result=py.runPython('simulate(scenario_input)');
