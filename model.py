@@ -7,7 +7,7 @@ def emit(x):
     return json.dumps(x, ensure_ascii=False, allow_nan=False)
 
 def initialize(raw):
-    global book, codes, names, L, M, V, sheets, valid, linkage_data
+    global book, codes, names, L, M, V, sheets, valid
     wb = openpyxl.load_workbook(io.BytesIO(bytes(raw)), read_only=True, data_only=True)
     book = {s: list(wb[s].values) for s in wb.sheetnames}
     wb.close()
@@ -36,33 +36,46 @@ def initialize(raw):
     valid = max(residuals.values()) < 1e-8
     if not valid: raise ValueError('계수 검증 실패: '+str(residuals))
 
-    # 전후방 연쇄효과 (영향력계수 & 감응도계수) 계산
+    # 1) 산업별 생산·수입·부가가치 유발계수 (열합: 해당 산업 최종수요 1단위당 유발효과)
+    prod_coef = L.sum(axis=0)
+    imp_coef = M.sum(axis=0)
+    va_coef = V.sum(axis=0)
+
+    effects = [
+        {
+            'code': c,
+            'name': name,
+            'production': float(p),
+            'imports': float(imp),
+            'valueAdded': float(va)
+        }
+        for c, name, p, imp, va in zip(codes, names, prod_coef, imp_coef, va_coef)
+    ]
+
+    # 2) 전후방 연쇄효과 (영향력계수 & 감응도계수)
     n = len(codes)
     mean_L = float(L.sum()) / n
-    bl = L.sum(axis=0) / mean_L  # 열합 / 평균 -> 영향력계수 (후방연쇄효과)
-    fl = L.sum(axis=1) / mean_L  # 행합 / 평균 -> 감응도계수 (전방연쇄효과)
-    linkage_data = []
-    for c, name, b_val, f_val in zip(codes, names, bl, fl):
-        if b_val >= 1.0 and f_val >= 1.0:
-            group = '핵심 선도형 (전·후방 모두 높음)'
-        elif b_val >= 1.0:
-            group = '최종재 견인형 (후방연쇄 높음)'
-        elif f_val >= 1.0:
-            group = '기초 소재형 (전방연쇄 높음)'
-        else:
-            group = '독립·특화형 (전·후방 모두 낮음)'
-        linkage_data.append({
+    bl = prod_coef / mean_L
+    fl = L.sum(axis=1) / mean_L
+    linkage_data = [
+        {
             'code': c,
             'name': name,
             'backward': float(b_val),
-            'forward': float(f_val),
-            'group': group
-        })
+            'forward': float(f_val)
+        }
+        for c, name, b_val, f_val in zip(codes, names, bl, fl)
+    ]
 
     amount_sheets = [s for s in sheets if '거래표' in s]
-    return emit({'sectors':[{'code':c,'name':n} for c,n in zip(codes,names)],
-                 'sheets':sheets, 'amountSheets': amount_sheets,
-                 'residuals':residuals, 'linkages': linkage_data})
+    return emit({
+        'sectors': [{'code': c, 'name': n} for c, n in zip(codes, names)],
+        'sheets': sheets,
+        'amountSheets': amount_sheets,
+        'residuals': residuals,
+        'effects': effects,
+        'linkages': linkage_data
+    })
 
 def explore(sheet, rowcode):
     rows=book[sheet]
@@ -99,7 +112,6 @@ def heatmap(sheet, mode='top', top_n=15, custom_codes=None):
         selected_idx = [codes.index(c) for c in custom_codes if c in codes]
     else:
         n = max(5, min(30, int(top_n)))
-        # 중간거래(행합 + 열합) 규모가 큰 상위 N개 산업 선정
         activity = full.sum(axis=0) + full.sum(axis=1)
         selected_idx = list(np.argsort(activity)[::-1][:n])
 
@@ -111,18 +123,3 @@ def heatmap(sheet, mode='top', top_n=15, custom_codes=None):
         'matrix': sub.tolist(),
         'maxVal': float(sub.max()) if sub.size else 0.0
     })
-
-def simulate(payload):
-    if not valid: raise ValueError('검증된 데이터가 없습니다.')
-    shocks=json.loads(payload); f=np.zeros(len(codes))
-    for s in shocks:
-        a=float(s['amount'])
-        if not np.isfinite(a) or a<0: raise ValueError('수요 증가액은 유한한 0 이상의 수여야 합니다.')
-        f[codes.index(s['code'])]+=a
-    if not f.sum()>0: raise ValueError('한 산업 이상의 양의 수요 증가액을 입력하세요.')
-    x=L@f; m=M@f; v=V@f
-    result=[{'code':c,'name':n,'production':float(a),'imports':float(b),'valueAdded':float(d)}
-            for c,n,a,b,d in zip(codes,names,x,m,v)]
-    result.sort(key=lambda r:r['production'],reverse=True)
-    return emit({'demand':float(f.sum()),'production':float(x.sum()),'imports':float(m.sum()),
-                 'valueAdded':float(v.sum()),'multiplier':float(x.sum()/f.sum()),'rows':result})
