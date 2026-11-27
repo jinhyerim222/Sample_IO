@@ -1,84 +1,37 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8"/>
-  <meta content="width=device-width,initial-scale=1" name="viewport"/>
-  <title>2023 한국 산업연관표 분석 대시보드</title>
-  <link href="./style.css" rel="stylesheet"/>
-  <script defer="" src="./app.js"></script>
-</head>
-<body>
-  <header>
-    <div class="header-inner">
-      <span class="badge">2023 · 생산자가격 · 380개 기본부문</span>
-      <h1>한국 산업연관표 분석 웹앱</h1>
-      <p>12개 원자료 시트 탐색 · 유발효과 순위 비교 · 산업 간 거래 히트맵 · 전후방 연쇄효과</p>
-    </div>
-  </header>
-
-  <nav aria-label="주요 메뉴">
-    <div class="nav-inner">
-      <a href="#explorer">1. 원자료 탐색</a>
-      <a href="#effects-sec">2. 유발효과 순위 차트</a>
-      <a href="#heatmap-sec">3. 산업 간 거래 히트맵</a>
-      <a href="#linkage-sec">4. 전후방 연쇄효과</a>
-    </div>
-  </nav>
-
-  <main>
-    <aside aria-label="분석 준비 상태" class="loading-status">
-      <div class="status-row">
-        <p id="status" role="status">"기본부문 불러오기" 버튼을 눌러 자료를 불러오세요.</p>
-        <button id="load-basic" type="button" class="primary-btn">기본부문 불러오기</button>
-      </div>
-      <details>
-        <summary>계수 검증 결과 보기</summary>
-        <pre id="validation">아직 자료를 불러오지 않았습니다.</pre>
-      </details>
-    </aside>
-
-    <!-- 1. 원자료 탐색 -->
-    <section id="explorer">
-      <div class="section-heading">
-        <div>
-          <span class="step-pill">STEP 01</span>
-          <h2>원자료 탐색</h2>
+<div class="tab-group" role="group" aria-label="유발효과 지표 선택">
+          <button type="button" class="tab-btn active" data-mode="single" data-metric="production">생산유발효과</button>
+          <button type="button" class="tab-btn" data-mode="single" data-metric="imports">수입유발효과</button>
+          <button type="button" class="tab-btn" data-mode="single" data-metric="valueAdded">부가가치유발효과</button>
+          <button type="button" class="tab-btn" data-mode="pair">두 지표 짝꿍 비교</button>
         </div>
       </div>
-      <p class="section-desc">선택한 행이 각 열과 어떻게 연결되는지 확인합니다. 산업 행뿐 아니라 원표의 합계·분석지표 행도 포함됩니다.</p>
-      <div class="grid-controls">
-        <label>시트 선택<select disabled="" id="sheet"></select></label>
-        <label>행 이름 검색<input disabled="" id="row-search" placeholder="예: 자동차, 부가가치"/></label>
-        <label>행 선택<select disabled="" id="row"></select></label>
-        <label>열 검색<input disabled="" id="col-search" placeholder="열 이름 또는 코드"/></label>
-      </div>
-      <p id="unit" class="unit-pill"></p>
-      <div class="scroll">
-        <table>
-          <caption id="explore-caption">기본 자료를 불러온 후 표시됩니다.</caption>
-          <thead><tr><th>열 코드</th><th>열 이름</th><th>원자료 값</th></tr></thead>
-          <tbody id="cells"></tbody>
-        </table>
-      </div>
-      <p class="note">스크롤하여 전체 열을 볼 수 있습니다. 금액표의 일반 데이터 단위는 백만원입니다.</p>
-    </section>
-
-    <!-- 2. 생산 · 수입 · 부가가치 유발효과 순위 막대그래프 -->
-    <section id="effects-sec">
-      <div class="section-heading">
-        <div>
-          <span class="step-pill">STEP 02</span>
-          <h2>생산 · 수입 · 부가가치 유발효과 순위</h2>
-        </div>
-        <div class="tab-group" role="group" aria-label="유발효과 지표 선택">
-          <button type="button" class="tab-btn active" data-metric="production">생산유발효과</button>
-          <button type="button" class="tab-btn" data-metric="imports">수입유발효과</button>
-          <button type="button" class="tab-btn" data-metric="valueAdded">부가가치유발효과</button>
-        </div>
-      </div>
-      <p class="section-desc">각 산업에 최종수요 1단위가 발생할 때 전 산업에 파급되는 유발계수(열합) 크기 순위입니다. 상위 산업을 막대그래프로 한눈에 비교합니다.</p>
+      <p class="section-desc">각 산업에 최종수요 1단위가 발생할 때 전 산업에 파급되는 유발계수(열합) 크기 순위입니다. 단일 지표 순위나 두 지표 간 대비를 막대그래프로 비교합니다.</p>
 
       <div class="cards" id="effect-cards"></div>
+
+      <div id="pair-controls" class="pair-box" hidden="">
+        <label class="inline-label">기준 지표(A)
+          <select disabled="" id="pair-metric-a">
+            <option value="imports" selected="">수입유발계수</option>
+            <option value="production">생산유발계수</option>
+            <option value="valueAdded">부가가치유발계수</option>
+          </select>
+        </label>
+        <label class="inline-label">비교 지표(B)
+          <select disabled="" id="pair-metric-b">
+            <option value="valueAdded" selected="">부가가치유발계수</option>
+            <option value="production">생산유발계수</option>
+            <option value="imports">수입유발계수</option>
+          </select>
+        </label>
+        <label class="inline-label">정렬 기준
+          <select disabled="" id="pair-sort">
+            <option value="a" selected="">기준 지표(A) 높은 순</option>
+            <option value="b">비교 지표(B) 높은 순</option>
+            <option value="gapA">A − B 차이 큰 순</option>
+          </select>
+        </label>
+      </div>
 
       <div class="bar-controls">
         <h3 id="bar-title">생산유발계수 상위 15개 산업</h3>
@@ -94,123 +47,3 @@
           <button disabled="" id="download-effects" type="button" class="ghost-btn">전체 380개 CSV 저장</button>
         </div>
       </div>
-
-      <div id="bars" class="bar-list">
-        <p class="empty-msg">자료를 불러오면 순위 막대그래프가 자동으로 표시됩니다.</p>
-      </div>
-    </section>
-
-    <!-- 3. 산업연관표 거래 관계 히트맵 -->
-    <section id="heatmap-sec">
-      <div class="section-heading">
-        <div>
-          <span class="step-pill">STEP 03</span>
-          <h2>산업연관표 거래 관계 히트맵</h2>
-        </div>
-      </div>
-      <p class="section-desc">세로축(행) 산업이 가로축(열) 산업에 중간재로 투입되는 거래 규모를 색상 농담으로 표현합니다. 색이 진할수록 거래가 활발하며, <strong>셀을 클릭하면 정확한 거래 금액</strong>이 표시됩니다.</p>
-
-      <div class="grid-controls">
-        <label>거래표 시트
-          <select disabled="" id="hm-sheet"></select>
-        </label>
-        <label>표시 기준
-          <select disabled="" id="hm-mode">
-            <option value="top">거래 규모 상위 N개 산업</option>
-            <option value="custom">관심 산업 직접 선택 (최대 20개)</option>
-          </select>
-        </label>
-        <label id="hm-top-wrap">상위 산업 수 (N)
-          <select disabled="" id="hm-top-n">
-            <option value="10">상위 10 × 10</option>
-            <option value="15" selected="">상위 15 × 15</option>
-            <option value="20">상위 20 × 20</option>
-            <option value="25">상위 25 × 25</option>
-          </select>
-        </label>
-        <label>색상 농담 스케일
-          <select disabled="" id="hm-scale">
-            <option value="log" selected="">로그(Log) 스케일 — 작은 거래 차이도 선명하게</option>
-            <option value="linear">선형(Linear) 스케일 — 절대 금액 비례</option>
-          </select>
-        </label>
-      </div>
-
-      <div hidden="" id="hm-custom-box" class="custom-box">
-        <label>히트맵에 추가할 산업 검색<input disabled="" id="hm-search" placeholder="예: 반도체, 자동차, 전력, 음식점"/></label>
-        <div class="inline-row">
-          <select disabled="" id="hm-sector-select"></select>
-          <button disabled="" id="hm-add-sector" type="button">추가</button>
-          <button disabled="" id="hm-reset-sector" type="button" class="ghost-btn">초기화</button>
-        </div>
-        <div id="hm-selected-tags" class="tag-list"></div>
-      </div>
-
-      <div class="hm-legend">
-        <span>거래 약함 (0)</span>
-        <div class="legend-bar"></div>
-        <span id="hm-max-label">거래 활발 (최댓값)</span>
-      </div>
-
-      <div id="hm-detail" class="detail-banner">
-        자료를 불러온 뒤 히트맵의 셀을 클릭하면 산업 간 거래 금액과 투입 비중이 여기에 표시됩니다.
-      </div>
-
-      <div class="hm-scroll">
-        <div id="hm-grid"></div>
-      </div>
-    </section>
-
-    <!-- 4. 전후방 연쇄효과 -->
-    <section id="linkage-sec">
-      <div class="section-heading">
-        <div>
-          <span class="step-pill">STEP 04</span>
-          <h2>전후방 연쇄효과 분석 (영향력계수 · 감응도계수)</h2>
-        </div>
-      </div>
-      <p class="section-desc">생산유발계수 행렬을 바탕으로 각 산업이 타 산업의 생산을 끌어당기는 힘(영향력계수)과 타 산업에 중간재로 공급되는 민감도(감응도계수)를 분석합니다.</p>
-      <div class="cards linkage-summary" id="linkage-cards"></div>
-
-      <div class="linkage-layout">
-        <div class="scatter-box">
-          <h3>전후방 연쇄효과 4사분면 분포도 (기준선 = 1.0)</h3>
-          <p class="note">점을 클릭하거나 마우스를 올리면 해당 산업의 위치를 확인할 수 있습니다.</p>
-          <svg id="linkage-svg" viewBox="0 0 540 420" role="img" aria-label="영향력계수와 감응도계수 산점도"></svg>
-          <p id="scatter-info" class="detail-banner">점 위에 마우스를 올리거나 클릭해 산업 정보를 확인하세요.</p>
-        </div>
-
-        <div class="linkage-table-box">
-          <h3>산업별 계수 순위 비교 (평균 1.000 기준)</h3>
-          <div class="inline-row" style="margin-bottom:10px;">
-            <input disabled="" id="linkage-search" placeholder="산업 이름 또는 코드 검색"/>
-            <select disabled="" id="linkage-sort">
-              <option value="backward">영향력계수(후방) 높은 순</option>
-              <option value="forward">감응도계수(전방) 높은 순</option>
-              <option value="code">산업 코드 순</option>
-            </select>
-          </div>
-          <div id="linkage-selected-note" class="detail-banner">
-            아래 표에서 산업 행을 클릭하면 후방·전방 성향 비교 해석이 표시됩니다.
-          </div>
-          <div class="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>순위</th>
-                  <th>코드</th>
-                  <th>산업명</th>
-                  <th>영향력계수<br><small>(평균 대비)</small></th>
-                  <th>감응도계수<br><small>(평균 대비)</small></th>
-                </tr>
-              </thead>
-              <tbody id="linkage-rows"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </section>
-  </main>
-  <footer>2023 산업연관표 분석 대시보드 · 브라우저 기반 인터랙티브 시각화</footer>
-</body>
-</html>
