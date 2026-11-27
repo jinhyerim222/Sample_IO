@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 const fmt=x=>Number(x).toLocaleString('ko-KR',{maximumFractionDigits:3});
-let worker, nextId=0, requests=new Map(), sectors=[], rowChoices=[], cells=[], basket=[], result=null;
-let barMetric='production', linkages=[], hmData=null, hmCustomList=[];
+let worker, nextId=0, requests=new Map(), sectors=[], rowChoices=[], cells=[];
+let effectList=[], barMetric='production', linkages=[], hmData=null, hmCustomList=[];
 
 function text(tag,value){const e=document.createElement(tag);e.textContent=value;return e;}
 function call(type,payload){return new Promise((resolve,reject)=>{const id=++nextId;requests.set(id,{resolve,reject});worker.postMessage({id,type,payload});});}
@@ -22,16 +22,15 @@ function options(el,list){
     return o;
   }));
 }
-function invalidate(){result=null;$('results').hidden=true;}
 
 const CONTROLS = [
-  'sheet','row','sector','add','run','row-search','col-search','sector-search','amount',
+  'sheet','row','row-search','col-search',
+  'effect-top-n','download-effects',
   'hm-sheet','hm-mode','hm-top-n','hm-scale','hm-search','hm-sector-select','hm-add-sector','hm-reset-sector',
   'linkage-search','linkage-sort'
 ];
 
 async function load(buffer){
-  invalidate();basket=[];renderBasket();
   for(const id of CONTROLS) if($(id)) $(id).disabled=true;
   if(worker)worker.terminate();
   for(const p of requests.values())p.reject(Error('데이터 다시 로드'));
@@ -39,10 +38,10 @@ async function load(buffer){
   try{
     const info=await call('init',buffer);
     sectors=info.sectors;
+    effectList=info.effects||[];
     linkages=info.linkages||[];
-    options($('sector'),sectors);
     options($('hm-sector-select'),sectors);
-    $('sector-search').value='';$('row-search').value='';$('col-search').value='';
+    $('row-search').value='';$('col-search').value='';
     $('sheet').replaceChildren(...info.sheets.map(s=>{const o=text('option',s);o.value=s;return o;}));
 
     const amountSheets = info.amountSheets && info.amountSheets.length ? info.amountSheets : info.sheets;
@@ -51,11 +50,11 @@ async function load(buffer){
     $('validation').textContent=JSON.stringify(info.residuals,null,2)+'\n최대 절대 잔차: 허용값 1e-8 미만';
     for(const id of CONTROLS) if($(id)) $(id).disabled=false;
 
-    // 기본 관심 산업 프리셋 8개 미리 세팅
     hmCustomList = sectors.slice(0, 8).map(s=>s.code);
     renderHmTags();
 
     await explore();
+    renderEffects();
     await loadHeatmap();
     renderLinkages();
 
@@ -73,7 +72,7 @@ async function explore(){
     const d=await call('explore',{sheet:$('sheet').value,row:$('row').value});
     if(seq!==exploreSeq)return;
     rowChoices=d.rows;filterRows(d.selected);cells=d.cells;
-    $('unit').textContent=d.unit;
+    $('unit').textContent='단위: '+d.unit;
     $('explore-caption').textContent=$('sheet').value+' / 행: '+d.selected+' '+d.name;
     renderCells();
   }catch(e){$('status').textContent=e.message;}
@@ -96,98 +95,82 @@ $('row').onchange=explore;
 $('row-search').oninput=()=>{filterRows();if($('row').value)explore();else{$('cells').replaceChildren();$('explore-caption').textContent='일치하는 행이 없습니다.';}};
 $('col-search').oninput=renderCells;
 
-/* 2. 수요충격 시뮬레이터 & 생산·수입·부가가치 순위 막대그래프 */
-$('sector-search').oninput=()=>{
-  const q=$('sector-search').value.trim();
-  options($('sector'),sectors.filter(s=>(s.code+' '+s.name).includes(q)));
-};
-function renderBasket(){
-  $('basket').replaceChildren(...basket.map((s,i)=>{
-    const li=text('li',s.code+' '+s.name+' / '+fmt(s.amount)+'백만원 ');
-    const b=text('button','삭제');b.type='button';
-    b.onclick=()=>{basket.splice(i,1);invalidate();renderBasket();};
-    li.append(b);return li;
-  }));
-  $('sim-status').textContent=basket.length?basket.length+'개 입력 준비. 계산 버튼을 누르세요.':'시나리오를 추가하세요.';
-}
-$('scenario').onsubmit=e=>{
-  e.preventDefault();
-  const amount=Number($('amount').value),s=sectors.find(s=>s.code===$('sector').value);
-  if(!s||!Number.isFinite(amount)||amount<=0){$('sim-status').textContent='산업과 양의 증가액을 확인하세요.';return;}
-  basket.push({...s,amount});invalidate();renderBasket();
-};
-$('clear').onclick=()=>{basket=[];invalidate();renderBasket();};
-$('run').onclick=async()=>{
-  if(!basket.length){$('sim-status').textContent='시나리오를 먼저 추가하세요.';return;}
-  const snapshot=basket.map(s=>({...s}));
-  $('run').disabled=true;$('sim-status').textContent='계산 중…';
-  try{
-    const r=await call('simulate',snapshot);
-    if(JSON.stringify(snapshot)!==JSON.stringify(basket)){$('sim-status').textContent='입력이 변경되었습니다. 다시 계산하세요.';return;}
-    result=r;renderResult();
-    $('sim-status').textContent='계산 완료. 아래 결과는 현재 시나리오에 대응합니다.';
-  }catch(e){invalidate();$('sim-status').textContent='계산 실패: '+e.message;}
-  finally{$('run').disabled=false;}
-};
-
+/* 2. 생산 · 수입 · 부가가치 유발효과 순위 막대그래프 */
 document.querySelectorAll('.tab-btn').forEach(btn=>{
   btn.onclick=()=>{
     document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     barMetric=btn.dataset.metric;
-    if(result) renderBars();
+    if(effectList.length) renderEffectBars();
   };
 });
+$('effect-top-n').onchange=()=>{ if(effectList.length) renderEffectBars(); };
 
-function renderBars(){
-  const labelMap={production:'생산유발액',imports:'수입유발액',valueAdded:'부가가치유발액'};
-  const colorMap={production:'#168179',imports:'#c05621',valueAdded:'#2b6cb0'};
-  $('bar-title').textContent=labelMap[barMetric]+' 상위 15개 산업';
+function renderEffects(){
+  if(!effectList.length) return;
+  const topP = [...effectList].sort((a,b)=>b.production-a.production)[0];
+  const topI = [...effectList].sort((a,b)=>b.imports-a.imports)[0];
+  const topV = [...effectList].sort((a,b)=>b.valueAdded-a.valueAdded)[0];
 
-  const sorted=[...result.rows].sort((a,b)=>b[barMetric]-a[barMetric]);
-  const top15=sorted.slice(0,15);
-  const max=Math.max(...top15.map(r=>r[barMetric]),1e-9);
+  $('effect-cards').replaceChildren(...[
+    ['생산유발계수 1위', topP.production.toFixed(3), topP.code+' '+topP.name],
+    ['수입유발계수 1위', topI.imports.toFixed(3), topI.code+' '+topI.name],
+    ['부가가치유발계수 1위', topV.valueAdded.toFixed(3), topV.code+' '+topV.name]
+  ].map(([title,val,sub])=>{
+    const d=text('div',title);d.className='card';
+    d.append(text('strong',val),text('span',sub));
+    return d;
+  }));
 
-  $('bars').replaceChildren(...top15.map((r,idx)=>{
+  renderEffectBars();
+}
+
+function renderEffectBars(){
+  const labelMap={production:'생산유발계수',imports:'수입유발계수',valueAdded:'부가가치유발계수'};
+  const colorMap={
+    production:'linear-gradient(90deg, #0d9488, #14b8a6)',
+    imports:'linear-gradient(90deg, #ea580c, #f97316)',
+    valueAdded:'linear-gradient(90deg, #4f46e5, #6366f1)'
+  };
+  const n = Number($('effect-top-n').value) || 15;
+  $('bar-title').textContent=`${labelMap[barMetric]} 상위 ${n}개 산업`;
+
+  const sorted=[...effectList].sort((a,b)=>b[barMetric]-a[barMetric]);
+  const topList=sorted.slice(0,n);
+  const max=Math.max(...topList.map(r=>r[barMetric]),1e-9);
+
+  $('bars').replaceChildren(...topList.map((r,idx)=>{
     const wrap=document.createElement('div');
-    wrap.className='bar';
-    const head=text('div',(idx+1)+'위 · '+r.code+' '+r.name+' — '+fmt(r[barMetric])+'백만원');
+    wrap.className='bar-item';
+
+    const rowTop=document.createElement('div');
+    rowTop.className='bar-row-top';
+    const left=document.createElement('span');
+    left.innerHTML=`<span class="rank-pill">${idx+1}위</span> <strong>${r.code} ${r.name}</strong>`;
+    const right=text('strong', r[barMetric].toFixed(4));
+    right.className='bar-val';
+    rowTop.append(left, right);
+
     const t=document.createElement('div');t.className='track';
     const f=document.createElement('div');f.className='fill';
-    f.style.width=Math.max(0,r[barMetric]/max*100)+'%';
+    f.style.width=Math.max(2, r[barMetric]/max*100)+'%';
     f.style.background=colorMap[barMetric];
-    t.append(f);wrap.append(head,t);
+    t.append(f);
+
+    wrap.append(rowTop, t);
     return wrap;
   }));
 }
 
-function renderResult(){
-  $('results').hidden=false;
-  $('cards').replaceChildren(...[
-    ['수요 증가액',result.demand],
-    ['생산유발액',result.production],
-    ['수입유발액',result.imports],
-    ['부가가치유발액',result.valueAdded]
-  ].map(([title,v])=>{
-    const d=text('div',title);d.className='card';
-    d.append(text('strong',fmt(v)),text('span','백만원'));
-    return d;
-  }));
-  renderBars();
-  $('result-rows').replaceChildren(...result.rows.map(r=>{
-    const tr=document.createElement('tr');
-    [r.code,r.name,fmt(r.production),fmt(r.imports),fmt(r.valueAdded)].forEach(v=>tr.append(text('td',v)));
-    return tr;
-  }));
-}
-
 function csvCell(v){let s=String(v);if(/^[=+@-]/.test(s)&&typeof v!=='number')s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
-$('download').onclick=()=>{
-  if(!result)return;
-  const rows=[['산업코드','산업명','생산유발액_백만원','수입유발액_백만원','부가가치유발액_백만원'],
-    ...result.rows.map(r=>[r.code,r.name,r.production,r.imports,r.valueAdded])];
+$('download-effects').onclick=()=>{
+  if(!effectList.length) return;
+  const rows=[
+    ['산업코드','산업명','생산유발계수','수입유발계수','부가가치유발계수'],
+    ...effectList.map(r=>[r.code,r.name,r.production,r.imports,r.valueAdded])
+  ];
   const url=URL.createObjectURL(new Blob(['\ufeff'+rows.map(r=>r.map(csvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}));
-  const a=document.createElement('a');a.href=url;a.download='io-2023-results.csv';a.click();
+  const a=document.createElement('a');a.href=url;a.download='io-2023-effects-380.csv';a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 
@@ -217,10 +200,9 @@ function getHeatColor(val, maxVal, scale){
     ? Math.log1p(val) / Math.log1p(maxVal)
     : val / maxVal;
   ratio = Math.max(0, Math.min(1, ratio));
-  // 옅은 민트/하늘색에서 진한 청록/남색으로 변화
-  const h = 192;
+  const h = 215;
   const s = Math.round(35 + ratio * 55);
-  const l = Math.round(96 - ratio * 66);
+  const l = Math.round(96 - ratio * 64);
   return `hsl(${h}, ${s}%, ${l}%)`;
 }
 
@@ -336,9 +318,9 @@ function renderLinkages(){
   const bothHigh=linkages.filter(x=>x.backward>=1 && x.forward>=1).length;
 
   $('linkage-cards').replaceChildren(...[
-    ['최고 영향력계수 (후방)', maxBL.backward.toFixed(3), maxBL.name],
-    ['최고 감응도계수 (전방)', maxFL.forward.toFixed(3), maxFL.name],
-    ['핵심 선도형 부문 수', bothHigh+'개', '영향력 ≥ 1 & 감응도 ≥ 1']
+    ['최고 영향력계수 (후방)', maxBL.backward.toFixed(3), maxBL.code+' '+maxBL.name],
+    ['최고 감응도계수 (전방)', maxFL.forward.toFixed(3), maxFL.code+' '+maxFL.name],
+    ['전·후방 모두 1.0 이상 부문', bothHigh+'개', '전체 380개 산업 중 핵심 선도군']
   ].map(([title,big,sub])=>{
     const d=text('div',title);d.className='card';
     d.append(text('strong',big),text('span',sub));
@@ -368,53 +350,49 @@ function renderLinkageScatter(){
   };
 
   svg.replaceChildren();
-  // 배경 사분면 영역 표시
   svg.append(
-    el('rect',{x:x1,y:padT,width:W-padR-x1,height:y1-padT,fill:'#e6fffa',opacity:'0.75'}),
-    el('rect',{x:padL,y:padT,width:x1-padL,height:y1-padT,fill:'#ebf8ff',opacity:'0.6'}),
-    el('rect',{x:x1,y:y1,width:W-padR-x1,height:padT+plotH-y1,fill:'#fffaf0',opacity:'0.7'}),
+    el('rect',{x:x1,y:padT,width:W-padR-x1,height:y1-padT,fill:'#eef2ff',opacity:'0.85'}),
+    el('rect',{x:padL,y:padT,width:x1-padL,height:y1-padT,fill:'#f0fdfa',opacity:'0.75'}),
+    el('rect',{x:x1,y:y1,width:W-padR-x1,height:padT+plotH-y1,fill:'#fff7ed',opacity:'0.8'}),
     el('rect',{x:padL,y:y1,width:x1-padL,height:padT+plotH-y1,fill:'#f8fafc'})
   );
 
-  // 테두리 및 기준선(1.0)
   svg.append(
-    el('rect',{x:padL,y:padT,width:plotW,height:plotH,fill:'none',stroke:'#cbd5e1'}),
-    el('line',{x1:x1,y1:padT,x2:x1,y2:padT+plotH,stroke:'#c05621','stroke-dasharray':'5,4','stroke-width':'1.5'}),
-    el('line',{x1:padL,y1:y1,x2:padL+plotW,y2:y1,stroke:'#c05621','stroke-dasharray':'5,4','stroke-width':'1.5'})
+    el('rect',{x:padL,y:padT,width:plotW,height:plotH,fill:'none',stroke:'#cbd5e1',rx:'6'}),
+    el('line',{x1:x1,y1:padT,x2:x1,y2:padT+plotH,stroke:'#f97316','stroke-dasharray':'5,4','stroke-width':'1.5'}),
+    el('line',{x1:padL,y1:y1,x2:padL+plotW,y2:y1,stroke:'#f97316','stroke-dasharray':'5,4','stroke-width':'1.5'})
   );
 
-  // 사분면 라벨
   const lbl=(txt,x,y,anchor='start')=>{
-    const t=el('text',{x,y,fill:'#475569','font-size':'11','text-anchor':anchor});
+    const t=el('text',{x,y,fill:'#475569','font-size':'11','font-weight':'600','text-anchor':anchor});
     t.textContent=txt;return t;
   };
   svg.append(
-    lbl('핵심 선도형 (후방≥1, 전방≥1)', W-padR-6, padT+15, 'end'),
-    lbl('기초 소재형 (전방≥1)', padL+6, padT+15, 'start'),
-    lbl('최종재 견인형 (후방≥1)', W-padR-6, padT+plotH-8, 'end'),
-    lbl('독립·특화형', padL+6, padT+plotH-8, 'start'),
+    lbl('핵심 선도형 (후방≥1, 전방≥1)', W-padR-8, padT+16, 'end'),
+    lbl('기초 소재형 (전방≥1)', padL+8, padT+16, 'start'),
+    lbl('최종재 견인형 (후방≥1)', W-padR-8, padT+plotH-8, 'end'),
+    lbl('독립·특화형', padL+8, padT+plotH-8, 'start'),
     lbl('영향력계수 (후방연쇄효과) →', padL+plotW/2, H-10, 'middle')
   );
   const yTitle=lbl('감응도계수 (전방연쇄효과) →', 16, padT+plotH/2, 'middle');
   yTitle.setAttribute('transform',`rotate(-90, 16, ${padT+plotH/2})`);
   svg.append(yTitle);
 
-  // 데이터 점 렌더링
   linkages.forEach(d=>{
-    const color = (d.backward>=1 && d.forward>=1) ? '#0d9488'
-                : (d.backward>=1) ? '#d97706'
-                : (d.forward>=1) ? '#2563eb' : '#64748b';
+    const color = (d.backward>=1 && d.forward>=1) ? '#4f46e5'
+                : (d.backward>=1) ? '#ea580c'
+                : (d.forward>=1) ? '#0d9488' : '#94a3b8';
     const c=el('circle',{
       cx:sx(d.backward).toFixed(1),
       cy:sy(d.forward).toFixed(1),
-      r:'3.6',
+      r:'3.8',
       fill:color,
-      opacity:'0.78',
+      opacity:'0.8',
       style:'cursor:pointer'
     });
     const showInfo=()=>{
       $('scatter-info').innerHTML=
-        `<strong>[${d.code} ${d.name}]</strong> · ${d.group}<br>`+
+        `<strong>[${d.code} ${d.name}]</strong><br>`+
         `영향력계수(후방): <strong>${d.backward.toFixed(4)}</strong> | 감응도계수(전방): <strong>${d.forward.toFixed(4)}</strong>`;
     };
     c.onmouseenter=showInfo;
@@ -423,19 +401,59 @@ function renderLinkageScatter(){
   });
 }
 
+function describeLinkage(d){
+  const diff = d.backward - d.forward;
+  const blStr = d.backward.toFixed(3);
+  const flStr = d.forward.toFixed(3);
+  if (Math.abs(diff) < 0.08) {
+    return `${d.name}(${d.code})은(는) 영향력계수(${blStr})와 감응도계수(${flStr})가 비슷해 수요 유발과 공급 연계 역할이 균형을 이룹니다.`;
+  }
+  if (diff >= 0.08) {
+    return `${d.name}(${d.code})은(는) 영향력계수(${blStr})가 감응도계수(${flStr})보다 높아, 최종수요가 늘 때 타 산업의 중간재를 끌어당기는 후방 성향이 뚜렷합니다.`;
+  }
+  return `${d.name}(${d.code})은(는) 감응도계수(${flStr})가 영향력계수(${blStr})보다 높아, 여러 산업에 중간재로 폭넓게 공급되는 전방 성향이 뚜렷합니다.`;
+}
+
 function renderLinkageTable(){
   const q=$('linkage-search').value.trim();
   const sortBy=$('linkage-sort').value;
-  let filtered=linkages.filter(d=>(d.code+' '+d.name+' '+d.group).includes(q));
+  let filtered=linkages.filter(d=>(d.code+' '+d.name).includes(q));
   if(sortBy==='backward') filtered.sort((a,b)=>b.backward-a.backward);
   else if(sortBy==='forward') filtered.sort((a,b)=>b.forward-a.forward);
   else filtered.sort((a,b)=>a.code.localeCompare(b.code));
 
-  $('linkage-rows').replaceChildren(...filtered.map(d=>{
+  const tbody=$('linkage-rows');
+  tbody.replaceChildren(...filtered.map((d,idx)=>{
     const tr=document.createElement('tr');
-    [d.code, d.name, d.backward.toFixed(4), d.forward.toFixed(4), d.group].forEach(v=>tr.append(text('td',v)));
+    tr.style.cursor='pointer';
+    tr.onclick=()=>{
+      tbody.querySelectorAll('tr.active-row').forEach(r=>r.classList.remove('active-row'));
+      tr.classList.add('active-row');
+      $('linkage-selected-note').textContent=describeLinkage(d);
+    };
+
+    const diffBL=(d.backward-1>=0?'+':'')+(d.backward-1).toFixed(3);
+    const diffFL=(d.forward-1>=0?'+':'')+(d.forward-1).toFixed(3);
+    const rankText=sortBy==='code'?'-':`${idx+1}위`;
+
+    const cRank=text('td',rankText);
+    const cCode=text('td',d.code);
+    const cName=text('td',d.name);
+
+    const cBL=document.createElement('td');
+    cBL.innerHTML=`<strong>${d.backward.toFixed(3)}</strong> <small class="muted">(${diffBL})</small>`;
+
+    const cFL=document.createElement('td');
+    cFL.innerHTML=`<strong>${d.forward.toFixed(3)}</strong> <small class="muted">(${diffFL})</small>`;
+
+    tr.append(cRank,cCode,cName,cBL,cFL);
     return tr;
   }));
+
+  if(filtered.length && !$('linkage-selected-note').dataset.init){
+    $('linkage-selected-note').dataset.init='1';
+    $('linkage-selected-note').textContent=describeLinkage(filtered[0]);
+  }
 }
 $('linkage-search').oninput=renderLinkageTable;
 $('linkage-sort').onchange=renderLinkageTable;
