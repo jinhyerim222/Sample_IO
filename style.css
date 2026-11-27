@@ -214,10 +214,11 @@ button:disabled {
   color: #475569;
 }
 
-/* 탭 & 순위 막대그래프 */
+/* 탭 & 순위 막대그래프 (단일 + 짝꿍 비교 통합) */
 .tab-group {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
   background: #f1f5f9;
   padding: 5px;
   border-radius: 999px;
@@ -233,6 +234,17 @@ button:disabled {
   background: #ffffff;
   color: #312e81;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+.pair-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
 }
 .bar-controls {
   display: flex;
@@ -271,6 +283,16 @@ button:disabled {
   gap: 10px;
   margin-bottom: 7px;
   font-size: 0.93rem;
+}
+.pair-subrow {
+  margin-top: 8px;
+}
+.pair-caption {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.84rem;
+  color: #475569;
+  margin-bottom: 4px;
 }
 .rank-pill {
   display: inline-block;
